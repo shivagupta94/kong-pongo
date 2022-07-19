@@ -4,7 +4,11 @@
 
 function globals {
   # Project related global variables
+<<<<<<< HEAD
   PONGO_VERSION=1.3.0
+=======
+  PONGO_VERSION=1.1.0
+>>>>>>> 7616b82 (initial commit)
 
   local script_path
   # explicitly resolve the link because realpath doesn't do it on Windows
@@ -108,11 +112,19 @@ function globals {
 
   # unoffical Kong CE images repo, the fallback
   KONG_OSS_UNOFFICIAL_TAG_PREFIX="kong/kong:"
+<<<<<<< HEAD
   KONG_OSS_UNOFFICIAL_TAG_POSTFIX="-alpine"
 
   # Nightly EE images repo, these require to additionally set the credentials
   # in $DOCKER_USERNAME and $DOCKER_PASSWORD
   NIGHTLY_EE_TAG="kong/kong-gateway-internal:master-alpine"
+=======
+  KONG_OSS_UNOFFICIAL_TAG_POSTFIX=
+
+  # Nightly EE images repo, these require to additionally set the credentials
+  # in $DOCKER_USERNAME and $DOCKER_PASSWORD
+  NIGHTLY_EE_TAG="kong/kong-gateway-internal:master-nightly-alpine"
+>>>>>>> 7616b82 (initial commit)
 
   # Nightly CE images, these are public, no credentials needed
   NIGHTLY_CE_TAG="kong/kong:latest"
@@ -1130,9 +1142,20 @@ function main {
 
     local busted_params=()
     local busted_files=()
+<<<<<<< HEAD
     index=1
     for arg in "${EXTRA_ARGS[@]}"; do
       if [[ "$index" -lt "$files_start_index" ]]; then
+=======
+    local collect_coverage_report=false
+
+    index=1
+    for arg in "${EXTRA_ARGS[@]}"; do
+      if [[ "$arg" == "--coverage" ]]; then
+        collect_coverage_report=true
+        busted_params+=( "$arg" )
+      elif [[ "$index" -lt "$files_start_index" ]]; then
+>>>>>>> 7616b82 (initial commit)
         busted_params+=( "$arg" )
       else
         # substitute absolute host path for absolute docker path
@@ -1150,11 +1173,25 @@ function main {
 
     do_prerun_script
 
+<<<<<<< HEAD
     compose run --rm --use-aliases \
       -e KONG_LICENSE_DATA \
       -e KONG_TEST_DONT_CLEAN \
       kong \
       "$WINDOWS_SLASH/bin/sh" "-c" "bin/busted --helper=$WINDOWS_SLASH/pongo/busted_helper.lua ${busted_params[*]} ${busted_files[*]}"
+=======
+    local coverage_report=""
+    if $collect_coverage_report; then
+      coverage_report="; cp /kong-plugin/.luacov /kong/.luacov; luacov; mkdir -p luacov-html; cp -R luacov-html /kong-plugin/; cp luacov.report.out /kong-plugin/"
+    fi
+
+    compose run --rm --use-aliases \
+      -e KONG_LICENSE_DATA \
+      -e KONG_TEST_DONT_CLEAN \
+      -e KONG_TEST_PLUGIN_PATH \
+      kong \
+      "/bin/sh" "-c" "apk add nettle-dev; bin/busted --helper=bin/busted_helper.lua ${busted_params[*]} ${busted_files[*]} ${coverage_report}"
+>>>>>>> 7616b82 (initial commit)
     ;;
 
   shell)
