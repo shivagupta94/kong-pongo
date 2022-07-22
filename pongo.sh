@@ -75,7 +75,7 @@ function globals {
 
   NETWORK_NAME=pongo-test-network
   SERVICE_NETWORK_PREFIX="pongo-"
-  SERVICE_NETWORK_NAME=${SERVICE_NETWORK_PREFIX}${PROJECT_ID}
+  SERVICE_NETWORK_NAME=kong-pongo
 
   KONG_LICENSE_URL="https://download.konghq.com/internal/kong-gateway/license.json"
 
@@ -810,9 +810,9 @@ function pongo_down {
   while read -r network ; do
     PROJECT_ID=${network: -8}
     PROJECT_NAME=${PROJECT_NAME_PREFIX}${PROJECT_ID}
-    SERVICE_NETWORK_NAME=${SERVICE_NETWORK_PREFIX}${PROJECT_ID}
+    SERVICE_NETWORK_NAME=kong-pongo
     compose down --remove-orphans
-  done < <(docker network ls --filter 'name='$SERVICE_NETWORK_PREFIX --format '{{.Name}}')
+  done < <(docker network ls --filter name=kong-pongo)
 
   PROJECT_ID=$p_id
   PROJECT_NAME=$p_name
