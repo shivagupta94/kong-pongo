@@ -4,7 +4,7 @@
 
 function globals {
   # Project related global variables
-  PONGO_VERSION=2.6.0
+  PONGO_VERSION=1.3.0
 
   local script_path
   # explicitly resolve the link because realpath doesn't do it on Windows
@@ -71,7 +71,7 @@ function globals {
 
   NETWORK_NAME=pongo-test-network
   SERVICE_NETWORK_PREFIX="pongo-"
-  SERVICE_NETWORK_NAME=${SERVICE_NETWORK_PREFIX}${PROJECT_ID}
+  SERVICE_NETWORK_NAME=kong-pongo
 
   KONG_LICENSE_URL="https://download.konghq.com/internal/kong-gateway/license.json"
 
@@ -80,7 +80,7 @@ function globals {
   local platform
   platform=$(uname -s)
   if [ "${platform:0:5}" == "MINGW" ]; then
-    # Windows requires an extra / in docker command so //bin/bash
+    # Windows requires an extra / in docker command so //bin/sh
     # https://www.reddit.com/r/docker/comments/734arg/cant_figure_out_how_to_bash_into_docker_container/
     WINDOWS_SLASH="/"
     # for terminal output we passthrough winpty
@@ -96,27 +96,26 @@ function globals {
 
   # regular Kong Enterprise images repo (tag is build as $PREFIX$VERSION$POSTFIX).
   KONG_EE_TAG_PREFIX="kong/kong-gateway:"
-  KONG_EE_TAG_POSTFIX="-ubuntu"
+  KONG_EE_TAG_POSTFIX="-alpine"
 
   # all Kong Enterprise images repo (tag is build as $PREFIX$VERSION$POSTFIX).
   KONG_EE_PRIVATE_TAG_PREFIX="kong/kong-gateway-private:"
-  KONG_EE_PRIVATE_TAG_POSTFIX="-ubuntu"
+  KONG_EE_PRIVATE_TAG_POSTFIX="-alpine"
 
   # regular Kong CE images repo (tag is build as $PREFIX$VERSION$POSTFIX)
   KONG_OSS_TAG_PREFIX="kong:"
-  KONG_OSS_TAG_POSTFIX="-ubuntu"
+  KONG_OSS_TAG_POSTFIX="-alpine"
 
   # unoffical Kong CE images repo, the fallback
   KONG_OSS_UNOFFICIAL_TAG_PREFIX="kong/kong:"
-  KONG_OSS_UNOFFICIAL_TAG_POSTFIX="-ubuntu"
+  KONG_OSS_UNOFFICIAL_TAG_POSTFIX="-alpine"
 
-  # development EE images repo, these require to additionally set the credentials
+  # Nightly EE images repo, these require to additionally set the credentials
   # in $DOCKER_USERNAME and $DOCKER_PASSWORD
-  DEVELOPMENT_EE_TAG="kong/kong-gateway-internal:master-ubuntu"
+  NIGHTLY_EE_TAG="kong/kong-gateway-internal:master-alpine"
 
-  # development CE images, these are public, no credentials needed
-  DEVELOPMENT_CE_TAG="kong/kong:master-ubuntu"
-
+  # Nightly CE images, these are public, no credentials needed
+  NIGHTLY_CE_TAG="kong/kong:latest"
 
   # Dependency image defaults
   if [[ -z $POSTGRES_IMAGE ]] && [[ -n $POSTGRES ]]; then
@@ -143,14 +142,13 @@ function globals {
   # Commandline related variables
   unset ACTION
   FORCE_BUILD=${PONGO_FORCE_BUILD:-false}
-  KONG_DEPS_AVAILABLE=( "postgres" "cassandra" "redis" "squid" "grpcbin" "expose")
+  KONG_DEPS_AVAILABLE=( "postgres" "redis" "squid" "grpcbin" "expose")
   KONG_DEPS_START=( "postgres" )
   KONG_DEPS_CUSTOM=()
   RC_COMMANDS=( "run" "up" "restart" )
   EXTRA_ARGS=()
 
-  # resolve a '.x' to a real version; eg. "1.3.0.x" in $KONG_VERSION, and replace
-  # "stable" and "stable-ee" with actual versions
+  # resolve a '.x' to a real version; eg. "1.3.0.x" in $KONG_VERSION
   resolve_version
 
   unset CUSTOM_PLUGINS
@@ -201,7 +199,19 @@ function check_tools {
 
 
 function logo {
-  PONGO_VERSION=$PONGO_VERSION "$LOCAL_PATH"/assets/pongo_logo.sh
+  local BLUE='\033[0;36m'
+  local BROWN='\033[1;33m'
+  echo -e "${BLUE}"
+  echo -e "                ${BROWN}/~\\ ${BLUE}"
+  echo -e "  ______       ${BROWN}C oo${BLUE}"
+  echo -e "  | ___ \      ${BROWN}_( ^)${BLUE}"
+  echo -e "  | |_/ /__  _${BROWN}/${BLUE}__ ${BROWN}~\ ${BLUE}__   ___"
+  echo -e "  |  __/ _ \| '_ \ ${BROWN}/${BLUE} _ \`|/ _ \\"
+  echo -e "  | | | (_) | | | | (_| | (_) |"
+  echo -e "  \_|  \___/|_| |_|\__, |\___/"
+  echo -e "                    __/ |"
+  echo -e "                   |___/  ${BROWN}v$PONGO_VERSION"
+  echo -e "\033[0m"
 }
 
 
@@ -385,8 +395,8 @@ function validate_version {
     return
   fi
   err "Version '$version' is not supported, supported versions are:
-  Kong: ${KONG_CE_VERSIONS[*]} $STABLE_CE $DEVELOPMENT_CE
-  Kong Enterprise: ${KONG_EE_VERSIONS[*]} $STABLE_EE $DEVELOPMENT_EE
+  Kong: ${KONG_CE_VERSIONS[*]} ($NIGHTLY_CE)
+  Kong Enterprise: ${KONG_EE_VERSIONS[*]} ($NIGHTLY_EE)
 
 If the '$version' is valid but not listed, you can try to update Pongo first, and then retry."
 }
@@ -430,7 +440,7 @@ function docker_login_ee {
   echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
   if [[ ! $? -eq 0 ]]; then
     docker logout
-    err "Failed to log into the private Kong Enterprise docker repo. Make sure to provide the
+    err "Failed to log into the nightly Kong Enterprise docker repo. Make sure to provide the
 proper credentials in the \$DOCKER_USERNAME and \$DOCKER_PASSWORD environment variables."
   fi
 }
@@ -441,23 +451,22 @@ function get_image {
   # NOTE: the image is an original Kong image, not a development/Pongo one.
   # Result: $KONG_IMAGE will be set to an image based on the requested version
   local image
-  # shellcheck disable=SC2153  # will be resolved in set_variables.sh
-  if is_commit_based "$KONG_VERSION"; then
-    # go and pull the development image here
-    if [[ "$KONG_VERSION" == "$DEVELOPMENT_CE" ]]; then
-      # pull the Opensource development image
-      image=$DEVELOPMENT_CE_TAG
+  if is_nightly "$KONG_VERSION"; then
+    # go and pull the nightly image here
+    if [[ "$KONG_VERSION" == "$NIGHTLY_CE" ]]; then
+      # pull the Opensource Nightly image
+      image=$NIGHTLY_CE_TAG
       docker pull "$image"
       if [[ ! $? -eq 0 ]]; then
-        err "failed to pull the Kong CE development image $image"
+        err "failed to pull the Kong CE nightly image $image"
       fi
 
     else
-      # pull the Enterprise development image
-      image=$DEVELOPMENT_EE_TAG
+      # pull the Enterprise nightly image
+      image=$NIGHTLY_EE_TAG
       docker pull "$image"
       if [[ ! $? -eq 0 ]]; then
-        warn "failed to pull the Kong Enterprise development image, retrying with login..."
+        warn "failed to pull the Kong Enterprise nightly image, retrying with login..."
         check_secret_availability "$image"
         docker_login_ee
         docker pull "$image"
@@ -537,7 +546,6 @@ function get_license {
         # yet more additional dependenies like jq or similar.
         warn "failed to download the Kong Enterprise license file!
           $KONG_LICENSE_DATA"
-        unset KONG_LICENSE_DATA
       fi
     fi
   fi
@@ -550,16 +558,19 @@ function get_version {
   #
   # Result: $VERSION will be read from the image, and $KONG_TEST_IMAGE will be set.
   # NOTE1: $KONG_TEST_IMAGE is only a name, the image might not have been created yet
-  # NOTE2: if it is a development tag, then $VERSION will be a commit-id
+  # NOTE2: if it is a nightly, then $VERSION will be a commit-id
   if [[ -z $KONG_IMAGE ]]; then
+    if [[ -z $KONG_VERSION ]]; then
+      KONG_VERSION=$KONG_DEFAULT_VERSION
+    fi
     validate_version "$KONG_VERSION"
     get_image
   fi
 
   get_license
 
-  if is_commit_based "$KONG_VERSION"; then
-    # it's a development; get the commit-id from the image
+  if is_nightly "$KONG_VERSION"; then
+    # it's a nightly; get the commit-id from the image
     VERSION=$(docker inspect \
        --format "{{ index .Config.Labels \"org.opencontainers.image.revision\"}}" \
        "$KONG_IMAGE")
@@ -573,11 +584,11 @@ function get_version {
   else
     # regular Kong version, so extract the Kong version number
     local cmd=(
-      '/bin/bash' '-c' '/usr/local/openresty/luajit/bin/luajit -e "
+      '/bin/sh' '-c' '/usr/local/openresty/luajit/bin/luajit -e "
         local command = [[kong version]]
         local version_output = io.popen(command):read()
 
-        local version_pattern = [[([%d%.%-]+[%d%.])]]
+        local version_pattern = [[([%d%.%-]+)]]
         local parsed_version = version_output:match(version_pattern)
 
         io.stdout:write(parsed_version)
@@ -687,8 +698,8 @@ function build_image {
   # 3. do a 'make dev' and then some (see the Dockerfile)
   # 4. Tag the result as $KONG_TEST_IMAGE
   get_version
-  if is_commit_based "$KONG_VERSION"; then
-    # in a development then $VERSION is a commit id
+  if is_nightly "$KONG_VERSION"; then
+    # in a nightly then $VERSION is a commit id
     validate_version "$KONG_VERSION"
   else
     # regular version or an image provided, check $VERSION extracted from the image
@@ -705,11 +716,11 @@ function build_image {
     msg "rebuilding..."
   fi
 
-  if is_commit_based "$KONG_VERSION"; then
-    # development; we must fetch the related development files dynamically in this case
+  if is_nightly "$KONG_VERSION"; then
+    # nightly; we must fetch the related development files dynamically in this case
     # shellcheck disable=SC1090  # do not follow source
     source "${LOCAL_PATH}/assets/update_versions.sh"
-    update_development "$KONG_VERSION" "$VERSION"
+    update_nightly "$KONG_VERSION" "$VERSION"
   fi
 
   msg "starting build of image '$KONG_TEST_IMAGE'"
@@ -722,7 +733,6 @@ function build_image {
   $WINPTY_PREFIX docker build \
     -f "$DOCKER_FILE" \
     --progress $progress_type \
-    --build-arg PONGO_VERSION="$PONGO_VERSION" \
     --build-arg http_proxy \
     --build-arg https_proxy \
     --build-arg ftp_proxy \
@@ -787,9 +797,9 @@ function pongo_down {
   while read -r network ; do
     PROJECT_ID=${network: -8}
     PROJECT_NAME=${PROJECT_NAME_PREFIX}${PROJECT_ID}
-    SERVICE_NETWORK_NAME=${SERVICE_NETWORK_PREFIX}${PROJECT_ID}
+    SERVICE_NETWORK_NAME=kong-pongo
     compose down --remove-orphans
-  done < <(docker network ls --filter 'name='$SERVICE_NETWORK_PREFIX --format '{{.Name}}')
+  done < <(docker network ls --filter name=kong-pongo)
 
   PROJECT_ID=$p_id
   PROJECT_NAME=$p_name
@@ -900,8 +910,8 @@ function pongo_status {
       versions)
         echo Available Kong versions:
         echo ========================
-        echo Kong: "${KONG_CE_VERSIONS[*]}" "$STABLE_CE $DEVELOPMENT_CE"
-        echo Kong Enterprise: "${KONG_EE_VERSIONS[*]}" "$STABLE_EE $DEVELOPMENT_EE"
+        echo Kong: "${KONG_CE_VERSIONS[*]}" "$NIGHTLY_CE"
+        echo Kong Enterprise: "${KONG_EE_VERSIONS[*]}" "$NIGHTLY_EE"
         ;;
 
       --all)
@@ -1014,12 +1024,12 @@ function pongo_init {
     echo "*.rock" >> .gitignore
     msg "added '*.rock' to '.gitignore'"
   fi
-  if grep --quiet "^[.]pongo/[.]bash_history$" .gitignore ; then
-    msg "'.gitignore' already ignores '.pongo/.bash_history'"
+  if grep --quiet "^[.]pongo/[.]ash_history$" .gitignore ; then
+    msg "'.gitignore' already ignores '.pongo/.ash_history'"
   else
     echo "# exclude Pongo shell history" >> .gitignore
-    echo ".pongo/.bash_history" >> .gitignore
-    msg "added '.pongo/.bash_history' to '.gitignore'"
+    echo ".pongo/.ash_history" >> .gitignore
+    msg "added '.pongo/.ash_history' to '.gitignore'"
   fi
   if grep --quiet "^luacov[.]stats[.]out$" .gitignore ; then
     msg "'.gitignore' already ignores 'luacov.stats.out'"
@@ -1119,9 +1129,15 @@ function main {
 
     local busted_params=()
     local busted_files=()
+    local collect_coverage_report=false
+    echo "################## coverage #################"
+
     index=1
     for arg in "${EXTRA_ARGS[@]}"; do
-      if [[ "$index" -lt "$files_start_index" ]]; then
+      if [[ "$arg" == "--coverage" ]]; then
+        collect_coverage_report=true
+        busted_params+=( "$arg" )
+      elif [[ "$index" -lt "$files_start_index" ]]; then
         busted_params+=( "$arg" )
       else
         # substitute absolute host path for absolute docker path
@@ -1137,18 +1153,31 @@ function main {
       busted_files+=( "/kong-plugin/spec" )
     fi
 
+    echo "################## do_prerun_script -1 #################"
     do_prerun_script
+
+    local coverage_report=""
+    if $collect_coverage_report; then
+      coverage_report="; cp /kong-plugin/.luacov /kong/.luacov; luacov; mkdir -p luacov-html; cp -R luacov-html /kong-plugin/; cp luacov.report.out /kong-plugin/"
+    fi
+    echo "################## coverage_report -1 #################":$coverage_report
 
     compose run --rm --use-aliases \
       -e KONG_LICENSE_DATA \
       -e KONG_TEST_DONT_CLEAN \
-      -e PONGO_CLIENT_VERSION="$PONGO_VERSION" \
+      -e KONG_TEST_PLUGIN_PATH \
       kong \
-      "$WINDOWS_SLASH/bin/bash" "-c" "bin/busted --helper=$WINDOWS_SLASH/pongo/busted_helper.lua ${busted_params[*]} ${busted_files[*]}"
+      "$WINDOWS_SLASH/bin/sh" "-c" "bin/busted --helper=$WINDOWS_SLASH/pongo/busted_helper.lua ${busted_params[*]} ${busted_files[*]}"
+
+    echo "################## compose -1 ################# bin/busted --helper=$WINDOWS_SLASH/pongo/busted_helper.lua ${busted_params[*]} ${busted_files[*]}"
     ;;
 
   shell)
+
+    echo "################## get_plugin_names -1 #################"
     get_plugin_names
+
+    echo "################## get_version -1 #################"
     get_version
     docker inspect --type=image "$KONG_TEST_IMAGE" &> /dev/null
     if [[ ! $? -eq 0 ]]; then
@@ -1176,7 +1205,7 @@ function main {
     local script_mount=""
     if [[ "$exec_cmd" == "" ]]; then
       # no args, so plain shell, use -l to login and run profile scripts
-      exec_cmd="$WINDOWS_SLASH/bin/bash -l"
+      exec_cmd="$WINDOWS_SLASH/bin/sh -l"
       suppress_kong_version="false"
     elif [[ "${exec_cmd:0:1}" == "@" ]]; then
       # a script file as argument
@@ -1187,31 +1216,31 @@ function main {
         err "Not a valid script filename: $script"
       fi
       script_mount="-v $script:/kong/bin/shell_script.sh"
-      exec_cmd="$WINDOWS_SLASH/bin/bash /kong/bin/shell_script.sh"
+      exec_cmd="$WINDOWS_SLASH/bin/sh /kong/bin/shell_script.sh"
     fi
 
     local history_mount=""
-    local history_file=".pongo/.bash_history"
+    local history_file=".pongo/.ash_history"
     if [ -d ".pongo" ]; then
       touch "$history_file"
       history_file="$PONGO_WD/$history_file"
-      history_mount="-v $history_file:/root/.bash_history"
+      history_mount="-v $history_file:/root/.ash_history"
     fi
 
+    echo "################## do_prerun_script -2 #################"
     do_prerun_script
 
     # shellcheck disable=SC2086 # we explicitly want script_mount & exec_cmd to be splitted
     compose run --rm --use-aliases \
       -e KONG_LICENSE_DATA \
-      -e PONGO_CLIENT_VERSION="$PONGO_VERSION" \
       -e KONG_LOG_LEVEL \
       -e KONG_ANONYMOUS_REPORTS \
-      -e SUPPRESS_KONG_VERSION="$suppress_kong_version" \
-      -e KONG_PG_DATABASE="kong_tests" \
-      -e KONG_PLUGINS="$PLUGINS" \
-      -e KONG_CUSTOM_PLUGINS="$CUSTOM_PLUGINS" \
-      -e PS1_KONG_VERSION="$shellprompt" \
-      -e PS1_REPO_NAME="$repository_name" \
+      -e "SUPPRESS_KONG_VERSION=$suppress_kong_version" \
+      -e "KONG_PG_DATABASE=kong_tests" \
+      -e "KONG_PLUGINS=$PLUGINS" \
+      -e "KONG_CUSTOM_PLUGINS=$CUSTOM_PLUGINS" \
+      -e "PS1_KONG_VERSION=$shellprompt" \
+      -e "PS1_REPO_NAME=$repository_name" \
       $script_mount \
       $history_mount \
       kong $exec_cmd
@@ -1236,12 +1265,11 @@ function main {
     compose run --rm \
       --workdir="$WINDOWS_SLASH/kong-plugin" \
       -e KONG_LICENSE_DATA \
-      -e PONGO_CLIENT_VERSION="$PONGO_VERSION" \
       -e KONG_LOG_LEVEL \
       -e KONG_ANONYMOUS_REPORTS \
-      -e KONG_PG_DATABASE="kong_tests" \
-      -e KONG_PLUGINS="$PLUGINS" \
-      -e KONG_CUSTOM_PLUGINS="$CUSTOM_PLUGINS" \
+      -e "KONG_PG_DATABASE=kong_tests" \
+      -e "KONG_PLUGINS=$PLUGINS" \
+      -e "KONG_CUSTOM_PLUGINS=$CUSTOM_PLUGINS" \
       kong luacheck .
     ;;
 
@@ -1256,12 +1284,11 @@ function main {
     compose run --rm \
       --workdir="$WINDOWS_SLASH/kong-plugin" \
       -e KONG_LICENSE_DATA \
-      -e PONGO_CLIENT_VERSION="$PONGO_VERSION" \
       -e KONG_LOG_LEVEL \
       -e KONG_ANONYMOUS_REPORTS \
-      -e KONG_PG_DATABASE="kong_tests" \
-      -e KONG_PLUGINS="$PLUGINS" \
-      -e KONG_CUSTOM_PLUGINS="$CUSTOM_PLUGINS" \
+      -e "KONG_PG_DATABASE=kong_tests" \
+      -e "KONG_PLUGINS=$PLUGINS" \
+      -e "KONG_CUSTOM_PLUGINS=$CUSTOM_PLUGINS" \
       kong $WINDOWS_SLASH/pongo/pongo_pack.lua
     ;;
 
@@ -1273,22 +1300,27 @@ function main {
     ;;
 
   status)
+    echo "################## pongo_status -1 #################"
     pongo_status
     ;;
 
   init)
+    echo "################## pongo_init -1 #################"
     pongo_init
     ;;
 
   clean)
+    echo "################## pongo_clean -1 #################"
     pongo_clean
     ;;
 
   nuke)
+    echo "################## pongo_clean -2 #################"
     pongo_clean
     ;;
 
   expose)
+    echo "################## pongo_expose -1 #################"
     pongo_expose
     ;;
 
@@ -1328,9 +1360,8 @@ function main {
       compose run --rm \
         --workdir="$WINDOWS_SLASH/kong/spec" \
         -e KONG_LICENSE_DATA \
-        -e PONGO_CLIENT_VERSION="$PONGO_VERSION" \
-        -e KONG_PLUGINS="$PLUGINS" \
-        -e KONG_CUSTOM_PLUGINS="$CUSTOM_PLUGINS" \
+        -e "KONG_PLUGINS=$PLUGINS" \
+        -e "KONG_CUSTOM_PLUGINS=$CUSTOM_PLUGINS" \
         kong ldoc --dir=$WINDOWS_SLASH/kong-plugin/$subd .
       if [[ ! $? -eq 0 ]]; then
         err "failed to render the Kong development docs"
